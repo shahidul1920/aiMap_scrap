@@ -14,9 +14,6 @@ const OUTPUT_FILE = 'shops_output.csv';
 // Setup Output CSV Headers
 fs.writeFileSync(OUTPUT_FILE, '"Search Location","Name","Ratings","Best Services","Remarks","Shop Address","Website","Phone"\n');
 
-// THE GLOBAL BOUNCER: Only tracks exact physical stores across the whole run
-const seenPhones = new Set();
-
 // 1. Function to grab hard facts from SerpApi 
 async function getShopsFromSerpApi(query) {
     const url = `https://serpapi.com/search.json?engine=google_local&q=${encodeURIComponent(query)}&api_key=${SERPAPI_KEY}`;
@@ -34,10 +31,10 @@ async function getShopsFromSerpApi(query) {
         // Filter for shops with AT LEAST 250 reviews
         let qualifiedShops = data.local_results.filter(shop => shop.reviews && shop.reviews >= 250);
 
-        // THE TIEBREAKER SORT: Sort by Rating first, then by Total Reviews if ratings match!
+        // Sort by Stars first, then by Total Reviews as the tiebreaker
         qualifiedShops.sort((a, b) => {
-            if (b.rating !== a.rating) return b.rating - a.rating; // Sort by Stars
-            return b.reviews - a.reviews; // Tiebreaker: Total Votes
+            if (b.rating !== a.rating) return b.rating - a.rating; 
+            return b.reviews - a.reviews; 
         });
 
         return qualifiedShops; 
@@ -110,8 +107,9 @@ async function processLocations() {
 
                 let savedShopsForThisLocation = 0;
                 
-                // THE LOCAL BOUNCER: Resets for every new zip code!
+                // THE LOCAL BOUNCERS: These completely wipe clean for every new zip code
                 const seenBrandsThisZip = new Set(); 
+                const seenPhonesThisZip = new Set();
 
                 for (const shop of shops) {
                     if (savedShopsForThisLocation >= 5) break;
@@ -119,16 +117,15 @@ async function processLocations() {
                     const name = shop.title || 'N/A';
                     const phone = shop.phone || 'N/A';
                     
-                    // Normalize the brand name (e.g., "uBreakiFix - Katy" becomes "ubreakifix")
                     const normalizedBrand = name.toLowerCase().split(/[-|()]/)[0].trim();
 
-                    // 1. Check Global Overlap (Exact same physical store from a neighboring zip)
-                    if (phone !== 'N/A' && seenPhones.has(phone)) {
-                        console.log(`   -> ⚠️ Skipped: ${name} (Already saved from a neighboring Zip Code)`);
+                    // 1. Check Exact Overlap (Prevents saving the exact same store twice for THIS specific zip)
+                    if (phone !== 'N/A' && seenPhonesThisZip.has(phone)) {
+                        console.log(`   -> ⚠️ Skipped: ${name} (Duplicate listing inside this zip code search)`);
                         continue;
                     }
 
-                    // 2. Check Local Franchise Overlap (We already saved the best location of this brand in this zip)
+                    // 2. Check Franchise Overlap (We already saved the best location of this brand for THIS zip)
                     if (seenBrandsThisZip.has(normalizedBrand)) {
                         console.log(`   -> ⚠️ Skipped: ${name} (Lower-rated franchise location in this zip)`);
                         continue;
@@ -136,8 +133,8 @@ async function processLocations() {
 
                     console.log(`   -> Processing: ${name} (${shop.rating} Stars / ${shop.reviews} Reviews)`);
                     
-                    // Add to our trackers
-                    if (phone !== 'N/A') seenPhones.add(phone);
+                    // Add to our local trackers
+                    if (phone !== 'N/A') seenPhonesThisZip.add(phone);
                     seenBrandsThisZip.add(normalizedBrand);
 
                     const rating = shop.rating ? `${shop.rating} (${shop.reviews || 0})` : 'N/A';
@@ -163,14 +160,13 @@ async function processLocations() {
 
                     savedShopsForThisLocation++;
 
-                    // The RPM Brakes
                     await new Promise(resolve => setTimeout(resolve, 2500)); 
                 }
                 
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
-            console.log('\n✅ Elite Pipeline complete! Your output file is guaranteed to have zero duplicates and the best franchises... Check shops_output.csv');
+            console.log('\n✅ Area-Mapping Pipeline complete! Your output file is ready.');
         });
 }
 
